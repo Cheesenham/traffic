@@ -19,4 +19,15 @@ object NetworkModule {
             .build()
             .create(TmapApiService::class.java)
     }
+
+    // data.go.kr's standard Open API domain — correct for essentially all data.go.kr
+    // datasets, but the path segments in NationwideSignalApiService are still placeholders.
+    val nationwideSignalApi: NationwideSignalApiService by lazy {
+        Retrofit.Builder()
+            .baseUrl("https://apis.data.go.kr/")
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create())
+            .build()
+            .create(NationwideSignalApiService::class.java)
+    }
 }

@@ -28,6 +28,11 @@ android {
             "TMAP_APP_KEY",
             "\"${localProperties.getProperty("TMAP_APP_KEY", "")}\""
         )
+        buildConfigField(
+            "String",
+            "DATA_GO_KR_SERVICE_KEY",
+            "\"${localProperties.getProperty("DATA_GO_KR_SERVICE_KEY", "")}\""
+        )
     }
 
     buildTypes {

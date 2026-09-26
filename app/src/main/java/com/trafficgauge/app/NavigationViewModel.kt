@@ -4,11 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.trafficgauge.app.data.GeoUtils
+import com.trafficgauge.app.data.NetworkModule
 import com.trafficgauge.app.gauge.AssumedCycleSignalTimingSource
 import com.trafficgauge.app.gauge.GaugeResult
+import com.trafficgauge.app.gauge.NationwideSignalTimingSource
 import com.trafficgauge.app.gauge.SignalGaugeCalculator
 import com.trafficgauge.app.gauge.SignalTimingSource
 import com.trafficgauge.app.routing.GuidePoint
+import com.trafficgauge.app.routing.IntersectionRepository
 import com.trafficgauge.app.routing.LatLon
 import com.trafficgauge.app.routing.PoiResult
 import com.trafficgauge.app.routing.RouteRepository
@@ -45,7 +48,7 @@ class NavigationViewModel(
 
     fun onSpeedSample(speedKmh: Double, lat: Double, lon: Double) {
         _uiState.update { it.copy(speedKmh = speedKmh, currentLocation = LatLon(lat, lon)) }
-        recomputeGauge()
+        viewModelScope.launch { recomputeGauge() }
     }
 
     fun onQueryChange(query: String) {
@@ -93,7 +96,7 @@ class NavigationViewModel(
         }
     }
 
-    private fun recomputeGauge() {
+    private suspend fun recomputeGauge() {
         val state = _uiState.value
         val current = state.currentLocation ?: return
         val nextGuidePoint = state.guidePoints.firstOrNull { guidePoint ->
@@ -112,8 +115,18 @@ class NavigationViewModel(
             current.lat, current.lon,
             nextGuidePoint.location.lat, nextGuidePoint.location.lon,
         )
-        val guidePointId = "${nextGuidePoint.location.lat},${nextGuidePoint.location.lon}"
-        val greenRemaining = signalTimingSource.greenSecondsRemaining(guidePointId, System.currentTimeMillis())
+        val greenRemaining = signalTimingSource.greenSecondsRemaining(
+            driverLocation = current,
+            targetLocation = nextGuidePoint.location,
+            nowMillis = System.currentTimeMillis(),
+        )
+
+        if (greenRemaining == null) {
+            _uiState.update {
+                it.copy(nextGuidePoint = nextGuidePoint, distanceToNextGuidePointMeters = distance, gaugeResult = null)
+            }
+            return
+        }
 
         val gaugeResult = gaugeCalculator.calculate(
             distanceToSignalMeters = distance,
@@ -130,10 +143,20 @@ class NavigationViewModel(
         }
     }
 
-    class Factory(private val appKey: String) : ViewModelProvider.Factory {
+    class Factory(
+        private val tmapAppKey: String,
+        private val dataGoKrServiceKey: String,
+    ) : ViewModelProvider.Factory {
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
+            val timingSource: SignalTimingSource = if (dataGoKrServiceKey.isNotBlank()) {
+                val intersectionRepository = IntersectionRepository(NetworkModule.nationwideSignalApi, dataGoKrServiceKey)
+                NationwideSignalTimingSource(intersectionRepository, NetworkModule.nationwideSignalApi, dataGoKrServiceKey)
+            } else {
+                AssumedCycleSignalTimingSource()
+            }
+
             @Suppress("UNCHECKED_CAST")
-            return NavigationViewModel(RouteRepository(appKey)) as T
+            return NavigationViewModel(RouteRepository(tmapAppKey), timingSource) as T
         }
     }
 }

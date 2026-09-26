@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
 
     private val viewModel: NavigationViewModel by viewModels {
-        NavigationViewModel.Factory(BuildConfig.TMAP_APP_KEY)
+        NavigationViewModel.Factory(BuildConfig.TMAP_APP_KEY, BuildConfig.DATA_GO_KR_SERVICE_KEY)
     }
 
     private val requestLocationPermission = registerForActivityResult(

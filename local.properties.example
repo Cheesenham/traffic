@@ -2,3 +2,7 @@ sdk.dir=/path/to/your/Android/sdk
 
 # Tmap Open API (https://openapi.sk.com) — 마이페이지 > 앱 관리에서 확인
 TMAP_APP_KEY=YOUR_TMAP_APP_KEY_HERE
+
+# data.go.kr 행정안전부/한국지역정보개발원 "전국 교차로 신호제어기 실시간 정보" 활용신청 승인 후 발급되는 서비스키
+# 비워두면 앱이 자동으로 AssumedCycleSignalTimingSource(추정치)로 대체 동작함
+DATA_GO_KR_SERVICE_KEY=

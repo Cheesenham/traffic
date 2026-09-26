@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.trafficgauge.app.data.GeoUtils
 import com.trafficgauge.app.data.NetworkModule
 import com.trafficgauge.app.gauge.AssumedCycleSignalTimingSource
+import com.trafficgauge.app.gauge.CompositeSignalTimingSource
 import com.trafficgauge.app.gauge.GaugeResult
 import com.trafficgauge.app.gauge.NationwideSignalTimingSource
 import com.trafficgauge.app.gauge.SignalGaugeCalculator
@@ -150,7 +151,10 @@ class NavigationViewModel(
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val timingSource: SignalTimingSource = if (dataGoKrServiceKey.isNotBlank()) {
                 val intersectionRepository = IntersectionRepository(NetworkModule.nationwideSignalApi, dataGoKrServiceKey)
-                NationwideSignalTimingSource(intersectionRepository, NetworkModule.nationwideSignalApi, dataGoKrServiceKey)
+                val nationwide = NationwideSignalTimingSource(intersectionRepository, NetworkModule.nationwideSignalApi, dataGoKrServiceKey)
+                // Real coverage is Ulsan-only today (see NationwideSignalTimingSource's doc
+                // comment) — fall back to the estimate everywhere else instead of a blank gauge.
+                CompositeSignalTimingSource(nationwide, AssumedCycleSignalTimingSource())
             } else {
                 AssumedCycleSignalTimingSource()
             }

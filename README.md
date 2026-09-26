@@ -21,17 +21,24 @@
 - `ui/` — 지도(osmdroid), 목적지 검색바, 신호 게이지 Compose UI
 - `MainActivity.kt`, `NavigationViewModel.kt` — 화면 조립 및 상태 관리
 
-## 신호 데이터 소스: data.go.kr 전국 통합 데이터
+## 신호 데이터 소스: data.go.kr KLID 전국 통합 데이터 (B551982/rti)
 
-행정안전부/한국지역정보개발원이 제공하는 전국 교차로 신호제어기 실시간 정보(교차로 정보 + 신호잔여시간 정보)를 사용합니다. 서울시 V2X API와 같은 경찰청 표준 규격(8방향 × 6개 신호종류)을 따르는 것으로 보여, 필드명 규칙(`{방향}{신호종류}Sg{Rmdr|Stat}{Cs|Nm}`)은 서울시 API로 검증된 것을 그대로 적용했습니다.
+행정안전부/한국지역정보개발원(KLID)이 제공하는 실제 서비스키로 라이브 호출까지 검증했습니다.
 
-**아직 실제 응답으로 검증 못한 것 (활용신청 승인 후 확인 필요):**
-- `NationwideSignalApiService`의 `INTERSECTION_INFO_PATH` / `SIGNAL_TIMING_PATH`는 자리표시자입니다. data.go.kr Open API 상세 페이지의 "요청 URL"을 그대로 넣어야 합니다.
-- 잔여시간 단위가 정말 1/10초(deciseconds)인지, 필드명이 문서와 완전히 같은지 (`IntersectionInfoItem`의 `itstLat`/`itstLot` 등도 추정)
+- **엔드포인트**: `https://apis.data.go.kr/B551982/rti/{op}` — `crsrd_map_info`(교차로 정보), `tl_drct_info`(신호 잔여시간+상태)
+- **요청 파라미터**: `serviceKey`, `type=json`, `stdgCd`(10자리 시/도 표준코드, 유일한 필터), `pageNo`, `numOfRows`
+- **응답 구조**: `{header:{resultCode,resultMsg}, body:{totalCount,pageNo,numOfRows,items:{item:[...]}}}` — `resultCode`가 `K3`면 "이 지역은 해당 오퍼레이션 데이터 자체가 없음"(에러 아님, 빈 배열과는 다른 의미)
+- **필드명**: `crsrdId`/`crsrdNm`/`mapCtptIntLat`/`mapCtptIntLot`/`lmtSpd`(교차로), `{방향}{신호종류}sgSttsNm`/`{방향}{신호종류}sgRmndCs`(신호) — 방향 8개(`nt/et/st/wt/ne/se/sw/nw`) × 종류 6개(`Bs/Bc/Lt/Pd/St/Ut`)
+- **신호 상태값**: 한글이 아니라 SAE J2735 표준 영문 값 (`protected-Movement-Allowed`, `permissive-Movement-Allowed`, `stop-And-Remain`, `stop-Then-Proceed`, `dark`, 빈 문자열)
+- **잔여시간 단위**: **밀리초**로 실측 확인 (같은 필드를 4초 간격으로 반복 호출했을 때 값이 ~4000씩 줄어드는 것으로 확인; 필드 접미사 "Cs"가 암시하는 centisecond가 아님)
+- **커버리지**: `crsrd_map_info`(정적 교차로 목록)는 전국 폭넓게 있음(서울만 2779건, 실시간 갱신 확인). 반면 `tl_drct_info`(실시간 잔여시간)는 **울산광역시**에서 초 단위로 실제 갱신되는 걸 확인했고, 서울은 호출은 되지만 타임스탬프가 고정("00:00:00")인 데이터 1건만 나와 실시간이 아닐 가능성이 있음 — 지역별로 커버리지가 고르지 않으니 특정 지역이 될 거라고 가정하지 말 것.
+- **stdgCd 결정 방법**: 이 API는 위경도/교차로ID로 직접 조회가 안 되고 `stdgCd` 하나로만 필터링되므로, `SidoCodes`에서 GPS와 가장 가까운 17개 시/도 중심점을 찾아 근사치로 결정 (역지오코딩 API 의존 없이 계산만으로 처리)
+
+`CompositeSignalTimingSource`가 실제 데이터(`NationwideSignalTimingSource`)를 먼저 시도하고, 못 받으면 자동으로 `AssumedCycleSignalTimingSource`(추정치)로 폴백하므로 커버리지가 없는 지역에서도 게이지가 빈 화면이 되지 않습니다. `DATA_GO_KR_SERVICE_KEY`를 비워두면 처음부터 추정 모델만 사용합니다.
+
+**아직 남은 것:**
 - 현재는 진입방향의 **직진(St)** 신호만 읽습니다 — 좌회전 등 실제 회전에 맞는 신호를 읽으려면 Tmap 경로의 `turnType`을 `SignalMovement`에 매핑하는 로직 추가 필요
-- 전국 교차로 목록이 얼마나 큰지, 페이지네이션으로 전부 캐싱하는 게 맞는 접근인지(너무 크면 위치 기반 필터 API가 있는지 확인 필요)
-
-`DATA_GO_KR_SERVICE_KEY`를 비워두면 자동으로 `AssumedCycleSignalTimingSource`(추정치)로 폴백하므로, 위 항목이 아직 안 맞아도 앱 자체는 정상 동작합니다.
+- `SidoCodes`는 시/도 단위 근사치라 도 경계 근처에서는 옆 시/도로 판정될 수 있음 (API 필터 자체가 시/도 단위라 큰 문제는 아님)
 
 ## 그 외 알려진 제약
 

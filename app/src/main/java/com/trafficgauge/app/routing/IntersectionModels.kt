@@ -46,10 +46,17 @@ enum class SignalMovement(val fieldInfix: String) {
     U_TURN("Ut"),
 }
 
-/** One direction+movement's current reading: e.g. "북쪽 직진신호는 지금 녹색, 87초 남음". */
+/**
+ * One direction+movement's current reading: e.g. "북쪽 직진신호는 지금 녹색, 87초 남음".
+ *
+ * [stateName] holds a SAE J2735 MovementPhaseState value (confirmed against a real KLID
+ * response: "protected-Movement-Allowed", "permissive-Movement-Allowed", "stop-And-Remain",
+ * "stop-Then-Proceed", "dark", or "" when this movement has no active signal head) — not
+ * Korean 녹색/적색 text as the Seoul dataset's description page implied.
+ */
 data class SignalSnapshot(
     val stateName: String?,
     val remainingSeconds: Double?,
 ) {
-    val isGreen: Boolean get() = stateName?.contains("녹") == true || stateName?.contains("green", ignoreCase = true) == true
+    val isGreen: Boolean get() = stateName == "protected-Movement-Allowed" || stateName == "permissive-Movement-Allowed"
 }

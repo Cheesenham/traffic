@@ -5,20 +5,27 @@ import com.trafficgauge.app.data.NationwideSignalApiService
 import com.trafficgauge.app.routing.ApproachDirection
 import com.trafficgauge.app.routing.IntersectionRepository
 import com.trafficgauge.app.routing.LatLon
+import com.trafficgauge.app.routing.SidoCodes
 import com.trafficgauge.app.routing.SignalMovement
 import com.trafficgauge.app.routing.SignalSnapshot
 
 /**
- * Real signal data from the nationwide (행정안전부/한국지역정보개발원) "교차로 신호제어기
- * 신호잔여시간 정보" open dataset — see NationwideSignalApiService for the caveats on exact
- * field names/paths that still need verifying against a live response.
+ * Real signal data from the nationwide (행정안전부/한국지역정보개발원, KLID) "교차로 신호제어기
+ * 실시간 정보" open dataset (data.go.kr B551982/rti).
+ *
+ * IMPORTANT — real-time coverage is uneven and still rolling out by region (see
+ * NationwideSignalApiService's doc comment for what's actually been observed: Ulsan changing
+ * live second-by-second, Seoul answering with a single suspiciously-static row). This class
+ * returns null whenever it has nothing to say for the given location, and
+ * NavigationViewModel wraps it in CompositeSignalTimingSource with
+ * AssumedCycleSignalTimingSource as the fallback so the gauge still shows something wherever
+ * live coverage isn't there yet.
  *
  * Approach direction is inferred from the bearing driverLocation -> targetLocation (matches
  * how the dataset assigns direction codes: "북(10)쪽 진입 차량" = the vehicle approaching
  * FROM the north). We read the STRAIGHT movement's signal for that direction as an MVP
- * simplification — a real implementation should use the route's actual turn type (from
- * Tmap's guide point "turnType") to pick LEFT_TURN/etc. instead when the maneuver isn't
- * straight through.
+ * simplification — picking the actual maneuver (e.g. via Tmap's guide-point turnType) would
+ * be more correct for a turning movement.
  */
 class NationwideSignalTimingSource(
     private val intersectionRepository: IntersectionRepository,
@@ -27,6 +34,9 @@ class NationwideSignalTimingSource(
     private val matchRadiusMeters: Double = 30.0,
     private val minFetchIntervalMillis: Long = 3000L,
 ) : SignalTimingSource {
+
+    /** stdgCd values that answered K3(NODATA) at least once — not worth re-polling every tick. */
+    private val knownNoDataStdgCd = mutableSetOf<String>()
 
     private var lastFetchIntersectionId: String? = null
     private var lastFetchAtMillis: Long = 0
@@ -37,7 +47,10 @@ class NationwideSignalTimingSource(
         targetLocation: LatLon,
         nowMillis: Long,
     ): Double? {
-        val intersection = intersectionRepository.findNearest(targetLocation, matchRadiusMeters) ?: return null
+        val stdgCd = SidoCodes.stdgCdFor(targetLocation.lat, targetLocation.lon)
+        if (stdgCd in knownNoDataStdgCd) return null
+
+        val intersection = intersectionRepository.findNearest(stdgCd, targetLocation, matchRadiusMeters) ?: return null
 
         val bearing = GeoUtils.bearingDegrees(
             driverLocation.lat, driverLocation.lon,
@@ -49,7 +62,7 @@ class NationwideSignalTimingSource(
             intersection.intersectionId != lastFetchIntersectionId ||
             nowMillis - lastFetchAtMillis > minFetchIntervalMillis
         ) {
-            fetchSnapshot(intersection.intersectionId, direction, SignalMovement.STRAIGHT)?.also {
+            fetchSnapshot(stdgCd, intersection.intersectionId, direction, SignalMovement.STRAIGHT)?.also {
                 lastSnapshot = it
                 lastFetchAtMillis = nowMillis
                 lastFetchIntersectionId = intersection.intersectionId
@@ -66,19 +79,32 @@ class NationwideSignalTimingSource(
     }
 
     private suspend fun fetchSnapshot(
+        stdgCd: String,
         intersectionId: String,
         direction: ApproachDirection,
         movement: SignalMovement,
     ): SignalSnapshot? = runCatching {
-        val response = api.getSignalTiming(serviceKey = serviceKey, intersectionId = intersectionId)
-        val item = response.response?.body?.items?.item?.firstOrNull() ?: return null
+        val response = api.getSignalTiming(serviceKey = serviceKey, stdgCd = stdgCd)
+        if (response.header?.resultCode == NationwideSignalApiService.RESULT_NODATA) {
+            knownNoDataStdgCd.add(stdgCd)
+            return null
+        }
 
-        val fieldKey = "${direction.fieldPrefix}${movement.fieldInfix}Sg"
-        val stateName = item["${fieldKey}StatNm"] as? String
-        // Field name suggests centiseconds ("Cs"), but the Seoul dataset's own description
-        // text says "1/10초" (deciseconds) — using deciseconds here; verify against a real
-        // response and switch the divisor to 100.0 if it turns out to actually be centiseconds.
-        val remainingRaw = (item["${fieldKey}RmdrCs"] as? Number)?.toDouble()
-        SignalSnapshot(stateName = stateName, remainingSeconds = remainingRaw?.div(10.0))
+        val item = response.body?.items?.item.orEmpty().firstOrNull { it["crsrdId"] == intersectionId } ?: return null
+
+        // Real field naming confirmed against a working client: "{dir}{kind}sgSttsNm" /
+        // "{dir}{kind}sgRmndCs" — note lowercase "sg" and "Stts"/"Rmnd", not the
+        // "Sg"+"Stat"/"Rmdr" this project's earlier Seoul-only attempt assumed.
+        val fieldKey = "${direction.fieldPrefix}${movement.fieldInfix}sg"
+        val stateName = item["${fieldKey}SttsNm"]
+        val remainingRaw = item["${fieldKey}RmndCs"]?.trim()?.toDoubleOrNull()
+        // "36001" is the documented sentinel for "unknown" — never a real reading.
+        val remainingMillis = remainingRaw?.takeUnless { it == 36001.0 }
+
+        // Unit confirmed empirically against LIVE Ulsan data (not from any doc): polling the
+        // same field ~4s apart while its state stayed constant showed it drop by ~3000 each
+        // time, and values on freshly-started phases (2000, 109000, 158000, ...) only make
+        // physical sense as milliseconds — 1/10s or 1/100s would imply multi-hour phases.
+        SignalSnapshot(stateName = stateName, remainingSeconds = remainingMillis?.div(1000.0))
     }.getOrNull()
 }

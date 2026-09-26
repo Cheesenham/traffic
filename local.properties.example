@@ -1,0 +1,4 @@
+sdk.dir=/path/to/your/Android/sdk
+
+# Tmap Open API (https://openapi.sk.com) — 마이페이지 > 앱 관리에서 확인
+TMAP_APP_KEY=YOUR_TMAP_APP_KEY_HERE
